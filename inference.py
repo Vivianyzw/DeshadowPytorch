@@ -1,9 +1,10 @@
 import torch
 from image_loader import *
-from ANET import *
+from AGNET import *
 
-net = ANet()
-net.load_state_dict(torch.load('params_299.pkl', map_location={'cuda:2':'cuda:0'}))
+net = GNet()
+#net.load_state_dict(torch.load('params_18899.pkl', map_location={'cuda:2':'cuda:0'}))
+net.load_state_dict(torch.load('params_18899.pkl')
 
 img_path = "./data/image/guangzhou_0901_00001.jpg"
 image = Image.open(img_path)
@@ -18,9 +19,9 @@ to_pil_image = transforms.ToPILImage()
 
 res = to_pil_image(result[0])
 res.show()
-imagelog = torch.log(image)
+imagelog = torch.log(image+1)
 
-deshadow = torch.add(imagelog,-1, result)
-deshadow = torch.exp(deshadow)
+deshadow = torch.add(imagelog, result)
+deshadow = torch.exp(deshadow)-1
 des = to_pil_image(deshadow[0])
 des.show()
