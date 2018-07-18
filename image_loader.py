@@ -6,7 +6,6 @@ import torchvision.transforms as transforms
 from PIL import Image
 
 
-
 def make_dataset(img_path, label_path):
     dataset = []
     for img in glob.glob(os.path.join(img_path, '*.jpg')):
