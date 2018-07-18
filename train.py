@@ -1,86 +1,117 @@
-from torch.nn import MSELoss
+import torch
 from image_loader import *
-from AGNET import *
-import torch.utils.data
-import torchvision.transforms as transforms
-import torch.optim as optim
-import torchvision.models as models
+from SNet import *
+import torch.utils.data as data
+import os
+
+#hyper parameters
+BATCH_SIZE = 1
+BASE_LR = 1e-3
+G_LR = 1e-5
 
 
-# define a function to get the target
-def makeLabel(data, label):
-    datalog = torch.log(data+1)
-    labellog = torch.log(label+1)
-    target = torch.abs(torch.add(datalog, -1, labellog))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device_ids = [0,2,3,4]
+
+normalization_mean = torch.tensor([0.485, 0.456, 0.406])
+normalization_std = torch.Tensor([0.229, 0.224, 0.225])
+
+
+def make_label(image, label):
+    imagelog = torch.log(image + 1).to(device)
+    labellog = torch.log(label + 1).to(device)
+    target = torch.abs(torch.add(imagelog, -1, labellog)).to(device)
+    target *= 3
     return target
 
-# define a function to initial the weights with Gaussian params of mean=0, std = 0.001
-def weights_init(m):
-    if isinstance(m, nn.Conv2d):
-        torch.nn.init.normal_(m.weight, mean=0, std=0.001)
-        torch.nn.init.constant_(m.bias, 0.1)
 
-# load the data, you should change the data relative address in "image_load.py"
-batch_size = 1
-dataset = mytraindata(".", transform=True, train=True, rescale=True)
-data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+def Normalization(input, mean, std):
+    m = torch.tensor(mean).view(-1, 1, 1).to(device)
+    s = torch.tensor(std).view(-1, 1, 1).to(device)
+    output = (input - m) / s
+    return output
 
-# create a GNet
-net = GNet()
-# initial the params 
-net.apply(weights_init)
-# using the vgg16 pre-trained model
-vgg16 = models.vgg16(pretrained=True)
-#print(vgg16)
-pretrained_dict = vgg16.state_dict()
-model_dict = net.state_dict()
-pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-model_dict.update(pretrained_dict)
-net.load_state_dict(model_dict)
 
-print(net)
-# if cuda is available, put the net on the gpu
-if torch.cuda.is_available():
-    net = net.cuda()
-   
-# define the loss function
-criterion = MSELoss()
 
-# setting a optimizer with different learning rate
-gparam = list(map(id, net.features.parameters()))
-base_params = filter(lambda p : id(p) not in gparam, net.parameters())
-optimizer = optim.SGD([
-            {'params': base_params},
-            {'params': net.features.parameters(), 'lr': 0.00001}], lr=0.0001, momentum=0.9)
+def single_gpu_train():
+    dataset = mytraindata("./data/image", "./data/label", True, True)
+    data_loader = data.DataLoader(dataset, batch_size= BATCH_SIZE)
 
-print(net.state_dict())
+    net = SNet()
+    net = net.to(device)
+    print(net)
 
-# train
-for epoch in range(100000):
-    running_loss = 0.0
-    for i, data in enumerate(data_loader, 0):
-        inputs, labels = data
-        if torch.cuda.is_available():
-            inputs = inputs.cuda()
-            labels = labels.cuda()
-        target = makeLabel(inputs, labels)
-        
-        optimizer.zero_grad()
-        outputs = net(inputs)
-        loss = criterion(outputs, target)
-      
-        print(loss, i, epoch)
-        loss.backward()
+    gparam = list(map(id, net.features.parameters()))
+    base_param = filter(lambda p: id(p) not in gparam, net.parameters())
 
-        optimizer.step()
-        running_loss += loss.item()
+    optimizer = torch.optim.SGD([
+        {'params': base_param},
+        {'params': net.features.parameters(), 'lr': G_LR}], lr = BASE_LR, momentum=0.9, weight_decay=5e-4)
+    criterion = torch.nn.MSELoss()
 
-        if i % 500 == 499:
-            print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 500))
-            running_loss = 0.0
-    if epoch % 100 == 99:
-        model_name = os.path.join('model/params_%d.pkl' % epoch)
-        torch.save(net.state_dict(), model_name)
-    #torch.save(net.state_dict(), 'params.pkl')
-#    print("finished training")
+    for epoch in range(100000):
+        for i, data in enumerate(data_loader, 0):
+            image, label = data
+            image = image.to(device)
+            label = label.to(device)
+            target = make_label(image, label)
 
+            norm_image = Normalization(image, normalization_mean, normalization_std)
+            prediction = net(norm_image)
+            loss = criterion(prediction, target)
+
+            print('Epoch: %d | iter: %d | train loss: %.10f' % (epoch, i, float(loss)))
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        if epoch % 100 == 99:
+            model_name = os.path.join('model/model_%d.pkl' % epoch)
+            torch.save(net.state_dict(), model_name)
+
+
+
+def multi_gpu_train():
+    dataset = mytraindata("./data/image", "./data/label", True, True)
+    data_loader = DATA.DataLoader(dataset, batch_size=BATCH_SIZE)
+    normalization_mean = torch.tensor([0.485, 0.456, 0.406]).cuda(device_ids[0])
+    normalization_std = torch.Tensor([0.229, 0.224, 0.225]).cuda(device_ids[0])
+
+    net = SNet()
+
+    net.cuda(device_ids[0])
+    net = nn.DataParallel(net, device_ids=device_ids)
+
+    gparam = list(map(id, net.module.features.parameters()))
+    base_param = filter(lambda p: id(p) not in gparam, net.parameters())
+    optimizer = torch.optim.SGD([
+        {'params': base_param},
+        {'params': net.module.features.parameters(), 'lr': G_LR}], lr=BASE_LR, momentum=0.9, weight_decay=5e-4)
+
+    criterion = torch.nn.MSELoss()
+    optimizer = nn.DataParallel(optimizer, device_ids=device_ids)
+
+    for epoch in range(100000):
+        for i, data in enumerate(data_loader, 0):
+            image, label = data
+            target = make_label(image, label)
+            norm_image = Normalization(image, normalization_mean, normalization_std)
+
+            img = Variable(norm_image, requires_grad=True).cuda(device_ids[0])
+            tar = Variable(target).cuda(device_ids[0])
+
+            prediction = net(img)
+            loss = criterion(prediction, tar)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.module.step()
+
+            print('Epoch: %d | iter: %d | train loss: %.10f' % (epoch, i, float(loss)))
+
+        if epoch % 1 == 0:
+            model_name = os.path.join("./model/model_%d.pkl" % epoch)
+            torch.save(net, model_name)
+
+
+single_gpu_train()
