@@ -6,51 +6,37 @@ import torchvision.transforms as transforms
 from PIL import Image
 
 
-def make_dataset(root, train=True):
-    dataset = []
-    if train:
-        dirgt = os.path.join(root, 'data/label')
-        dirimg = os.path.join(root, 'data/image')
 
-        for fGT in glob.glob(os.path.join(dirgt, '*.jpg')):
-            # for k in range(45)
-#            print(fGT)
-            fName = os.path.basename(fGT)
-            fImg = fName
- #           print(fName)
-  #          print(fImg)
-            dataset.append([os.path.join(dirimg, fImg), os.path.join(dirgt, fName)])
-        print(dataset)
+def make_dataset(img_path, label_path):
+    dataset = []
+    for img in glob.glob(os.path.join(img_path, '*.jpg')):
+        basename = os.path.basename(img)
+        image = os.path.join(img_path, basename)
+        label = os.path.join(label_path, basename)
+        dataset.append([image, label])
     return dataset
 
 
-
 class mytraindata(data.Dataset):
-
-    def __init__(self, root, transform=None, train=True, rescale=None):
-        self.train = train
+    def __init__(self, img_path, label_path, transform=None, rescale=None):
+        super(mytraindata, self).__init__()
+        self.train_set_path = make_dataset(img_path, label_path)
         self.transform = transform
         self.rescale = rescale
-        if self.train:
-            self.train_set_path = make_dataset(root, train)
 
-    def __getitem__(self, idx):
-        if self.train:
-            img_path, label_path = self.train_set_path[idx]
-            img = Image.open(img_path)
-            if self.rescale:
-                img = img.resize((224, 224))
-            if self.transform:
-                transform = transforms.ToTensor()
-                img = transform(img)
+    def __getitem__(self, item):
+        img_path, label_path = self.train_set_path[item]
+        image = Image.open(img_path)
+        label = Image.open(label_path)
+        transform = transforms.ToTensor()
+        if self.rescale:
+            image = image.resize((224, 224))
+            label = label.resize((224, 224))
+        if self.transform:
+            image = transform(image)
+            label = transform(label)
+        return image, label
 
-            label = Image.open(label_path)
-            if self.rescale:
-                label = label.resize((224, 224))
-            if self.transform:
-                transform = transforms.ToTensor()
-                label = transform(label)
-            return img, label
 
     def __len__(self):
         return len(self.train_set_path)
